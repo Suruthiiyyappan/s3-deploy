@@ -1,0 +1,146 @@
+name: Build and Deploy react application
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  build:
+    name: Build React Application
+    runs-on: ubuntu-latest
+     
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Clean npm cache
+        run: npm cache clean --force
+
+      - name: Use Node.js 21.x
+        uses: actions/setup-node@v3
+        with:
+          node-version: 21.x
+
+      - name: Install dependencies
+        run: |
+          npm install
+          npm ci
+          node -v
+          
+      - name: Build code
+        run: npm run build --if-present
+        
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: build-artifacts-${{ github.run_id }}
+          path: build
+
+  deploy_dev:
+    name: Deploy to Dev
+    runs-on: ubuntu-latest
+    environment:
+      name: dev
+    needs: build
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2    
+      - name: Download build artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: build-artifacts-${{ github.run_id }}
+          path: build
+
+      - name: Configure AWS Credentials Action For GitHub Actions
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.ACCESS_KEY}}
+          aws-secret-access-key: ${{ secrets.SECRET_KEY }}
+          aws-region: ${{ secrets.REGION }}
+
+      - name: Replacing env specific values
+        run: |
+          sed -i "s|{__login_endpoint__}|${{ secrets.login_endpoint}}|g; s|{__login_baseurl__}|${{ secrets.login_baseurl}}|g; s|{__login_baseclientd__}|${{ secrets.login_baseclientd}}|g; s|{__app_environment__}|${{ secrets.login_baseclientd}}|g" build/static/js/main.*.js
+          
+      - name: Deploy application to S3
+        run: aws s3 sync  --delete build s3://${{ secrets.BUCKET_NAME}}
+
+      - name: Invalidate CloudFront cache
+        run: |
+         aws cloudfront create-invalidation \
+         --distribution-id ${{ secrets.distribution_id}} \
+         --paths "/*"
+         
+  deploy_qa:
+    name: Deploy to qa
+    runs-on: ubuntu-latest
+    environment:
+      name: qa
+    needs: [build, deploy_dev]  
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2    
+      - name: Download build artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: build-artifacts-${{ github.run_id }}
+          path: build
+
+      - name: Configure AWS Credentials Action For GitHub Actions
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.ACCESS_KEY}}
+          aws-secret-access-key: ${{ secrets.SECRET_KEY }}
+          aws-region: ${{ secrets.REGION }}
+
+      - name: Replacing env specific values
+        run: |
+          sed -i "s|{__login_endpoint__}|${{ secrets.login_endpoint}}|g; s|{__login_baseurl__}|${{ secrets.login_baseurl}}|g; s|{__login_baseclientd__}|${{ secrets.login_baseclientd}}|g; s|{__app_environment__}|${{ secrets.login_baseclientd}}|g" build/static/js/main.*.js
+          
+      - name: Deploy application to S3
+        run: aws s3 sync  --delete build s3://${{ secrets.BUCKET_NAME}}
+
+      - name: Invalidate CloudFront cache
+        run: |
+         aws cloudfront create-invalidation \
+         --distribution-id ${{ secrets.distribution_id}} \
+         --paths "/*"
+         
+  deploy_prod:
+    name: Deploy to prod
+    runs-on: ubuntu-latest
+    environment:
+      name: prod
+    needs: [build, deploy_dev, deploy_qa]  
+    if: github.ref == 'release/*'    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2    
+      - name: Download build artifacts
+        uses: actions/download-artifact@v2
+        with:
+          name: build-artifacts-${{ github.run_id }}
+          path: build
+
+      - name: Configure AWS Credentials Action For GitHub Actions
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.ACCESS_KEY}}
+          aws-secret-access-key: ${{ secrets.SECRET_KEY }}
+          aws-region: ${{ secrets.REGION }}
+
+      - name: Replacing env specific values
+        run: |
+          sed -i "s|{__login_endpoint__}|${{ secrets.login_endpoint}}|g; s|{__login_baseurl__}|${{ secrets.login_baseurl}}|g; s|{__login_baseclientd__}|${{ secrets.login_baseclientd}}|g; s|{__app_environment__}|${{ secrets.login_baseclientd}}|g" build/static/js/main.*.js
+          
+      - name: Deploy application to S3
+        run: aws s3 sync  --delete build s3://${{ secrets.BUCKET_NAME}}
+
+      - name: Invalidate CloudFront cache
+        run: |
+         aws cloudfront create-invalidation \
+         --distribution-id ${{ secrets.distribution_id}} \
+         --paths "/*"
